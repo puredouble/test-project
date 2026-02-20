@@ -14,3 +14,9 @@ class ExternalResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
     response_time_ms: float
+
+# Queue에 담을 작업(Task)의 명세서
+class ApiTaskPayload(BaseModel):
+    provider_name: ProviderName
+    params: Dict[str, Any]
+    should_retry: bool = False  # ✨ 재시도 여부 파라미터 (기본값: 하지 않음)

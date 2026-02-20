@@ -40,3 +40,23 @@ class KakaoProfileApi(BaseApiProvider[KakaoProfileRequest, KakaoProfileResponse]
         
         # 반환된 Dict는 부모 클래스(execute)에서 response_schema로 2차 검증됨
         return response.json()
+    
+    
+    
+router = APIRouter(prefix="/api/v1/users", tags=["Users"])
+
+@router.get("/kakao-profile", response_model=ExternalResponse)
+async def fetch_single_kakao_profile(
+    user_id: str,
+    kakao_token: str,
+    # Proxy로 감싸진 Provider가 주입됨
+    provider: DbLoggingProviderProxy = Depends(get_kakao_profile_provider),
+    client: httpx.AsyncClient = Depends(get_http_client)
+):
+    params = {
+        "user_id": user_id,
+        "kakao_token": kakao_token
+    }
+
+    # API를 호출하면, 프록시 내부에서 알아서 DB 로깅까지 마치고 돌아옵니다.
+    return await provider.execute(client, params)
