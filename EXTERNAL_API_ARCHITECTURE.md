@@ -43,8 +43,8 @@ from typing import Any, Dict, Optional
 from enum import Enum
 
 class ProviderName(str, Enum):
-    SERVICE_A = "service_a"
-    SERVICE_B = "service_b"
+    HCP_CREATE_RUNTIME = "hcp_create_runtime"
+    HCP_GET_RUNTIME = "hcp_get_runtime"
     # [!] 신규 API 추가 시 여기에 이름 등록
 
 class ExternalResponse(BaseModel):
@@ -53,6 +53,7 @@ class ExternalResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
     response_time_ms: float
+    is_validation_error: bool = False
 ```
 
 ### 4.2. **`providers.py`** (인터페이스 및 구현체)
@@ -146,3 +147,14 @@ class ApiIntegrationManager:
   - (일단 동기 DB 세션 사용 하는 대신 thread pool 활용하여 병렬 진행)
 
 - 커넥션 재사용: httpx.AsyncClient는 매 요청마다 생성하지 않습니다. FastAPI의 lifespan을 활용하여 앱 시작 시 1개만 생성하고 의존성 주입으로 받아 사용합니다.
+
+
+# 🧪 외부 API 유효성 검증 테스트 코드 (Pytest & RESPX)
+
+본 테스트 코드는 Provider를 기준으로, Pydantic 기반의 Request/Response 유효성 검증 로직이 의도대로 예외를 차단하는지 검증합니다.
+
+## 1. 테스트 환경 설정 (Requirements)
+테스트를 실행하기 위해 필요한 패키지들입니다.
+```bash
+pip install pytest pytest-asyncio respx httpx
+```

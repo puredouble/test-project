@@ -2,8 +2,8 @@ import asyncio
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
-from base_api_schema import ExternalResponse
-from base_api_provider import BaseApiProvider
+from schema import ExternalResponse
+from provider import BaseApiProvider
 
 class ApiIntegrationManager:
     def __init__(self, providers: List[BaseApiProvider]):
