@@ -1,50 +1,58 @@
 package com.project.integration.api.service.provider;
 
 import com.project.integration.api.dto.ApiResponseDto;
-import com.project.integration.api.enums.ProviderName;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
+import javax.validation.ConstraintViolation;
+import javax.validation.Validator;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RequiredArgsConstructor
-public abstract class AbstractApiProvider implements ApiProvider {
+public abstract class AbstractApiProvider<REQ, RES> implements ApiProvider<REQ, RES> {
 
-    // Timeout이 설정된 RestTemplate을 주입받음 (Config에서 빈으로 등록 필요)
     protected final RestTemplate restTemplate;
+    protected final Validator validator; // 유효성 검증기 주입
 
     @Override
-    public ApiResponseDto execute(Map<String, Object> params) {
+    public ApiResponseDto<RES> execute(REQ requestDto) {
         long start = System.currentTimeMillis();
-        try {
-            // 하위 클래스에서 구현한 실제 HTTP 통신 로직 호출
-            Map<String, Object> result = fetch(params);
+
+        // 1. DTO 유효성 검증 (Validation)
+        Set<ConstraintViolation<REQ>> violations = validator.validate(requestDto);
+        if (!violations.isEmpty()) {
+            String errorMessage = violations.stream()
+                    .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                    .collect(Collectors.joining(", "));
             
-            return buildResponse(true, result, null, start);
+            log.warn("[{}] Validation Failed: {}", getProviderName().name(), errorMessage);
+            return buildResponse(false, null, errorMessage, start, true);
+        }
+
+        // 2. 외부 API 호출
+        try {
+            RES result = fetch(requestDto);
+            return buildResponse(true, result, null, start, false);
             
         } catch (Exception e) {
             log.error("[{}] API 연동 실패: {}", getProviderName().name(), e.getMessage());
-            return buildResponse(false, null, e.getMessage(), start);
+            return buildResponse(false, null, e.getMessage(), start, false);
         }
     }
 
-    /**
-     * 개별 API 공급자 클래스에서 구현할 실제 통신 로직
-     * @param params 요청 파라미터
-     * @return API 응답 데이터 (Map 형태)
-     */
-    protected abstract Map<String, Object> fetch(Map<String, Object> params) throws Exception;
+    protected abstract RES fetch(REQ requestDto) throws Exception;
 
-    // 공통 응답 포맷 생성
-    private ApiResponseDto buildResponse(boolean success, Map<String, Object> data, String error, long start) {
-        return ApiResponseDto.builder()
+    private ApiResponseDto<RES> buildResponse(boolean success, RES data, String error, long start, boolean isValidationErr) {
+        return ApiResponseDto.<RES>builder()
                 .providerName(getProviderName().name())
                 .success(success)
-                .data(data)
+                .data(data) 
                 .errorMessage(error)
                 .responseTimeMs(System.currentTimeMillis() - start)
+                .isValidationError(isValidationErr)
                 .build();
     }
 }
