@@ -7,6 +7,10 @@ public class ApiRequestQueue {
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE)
     private Long id;
+    
+    // 낙관적 락을 위한 버전 필드 (JPA가 자동 관리함)
+    @Version
+    private Long version;
 
     @Enumerated(EnumType.STRING)
     private ProviderName providerName;

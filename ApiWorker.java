@@ -9,21 +9,30 @@ public class ApiWorker {
 
     // 1. 메인 큐 처리 스케줄러 (1초마다 실행)
     @Scheduled(fixedDelay = 1000) 
-    public void processDbQueue() {
-        ApiRequestQueue request = fetchAndLockNextRequest();
-        if (request == null) return; // 큐에 처리할 항목이 없음
-
+    public void processDbQueue() {ApiRequestQueue request = null;
         try {
-            Map<String, Object> params = objectMapper.readValue(request.getParamsJson(), Map.class);
+            // 1. 대기열에서 꺼내어 선점 시도
+            request = fetchAndLockNextRequest();
+            if (request == null) return; // 큐가 비어있음
+
+            // 2. API 실행
             ApiProvider provider = providerMap.get(request.getProviderName().getBeanName());
+            Class<?> requestType = provider.getRequestType();
+            Object requestDto = objectMapper.readValue(request.getParamsJson(), requestType);
             
-            // API 통신 실행
-            ApiResponseDto result = provider.execute(params);
+            ApiResponseDto<?> result = ((ApiProvider<Object, ?>) provider).execute(requestDto);
+            
+            // 3. 결과 저장
             handleResult(request, result);
 
+        } catch (ObjectOptimisticLockingFailureException e) {
+            // [핵심] 다른 워커가 먼저 이 데이터를 가져갔음!
+            // 에러가 아니라 자연스러운 동시성 처리 현상이므로 무시하고 넘어갑니다.
+            log.debug("다른 워커가 이미 선점했습니다. 다음 스케줄에 재시도합니다.");
         } catch (Exception e) {
-            log.error("[API Failed] ID: {}, Error: {}", request.getId(), e.getMessage());
-            handleFailure(request, e.getMessage()); // Exception 에러 메시지를 넘김
+            if (request != null) {
+                handleFailure(request, e.getMessage());
+            }
         }
     }
 
@@ -43,18 +52,24 @@ public class ApiWorker {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     protected ApiRequestQueue fetchAndLockNextRequest() {
-        return queueRepository.findNextAvailableRequest().map(req -> {
-            req.markAsProcessing(); // 다른 워커가 가져가지 않도록 즉시 상태 변경
-            return queueRepository.save(req);
-        }).orElse(null);
-    }
+        // PageRequest를 통해 LIMIT 1 구현 (DB 호환)
+        List<ApiRequestQueue> requests = queueRepository.findNextAvailableRequests(
+                LocalDateTime.now(), PageRequest.of(0, 1));
+        
+        if (requests.isEmpty()) return null;
 
+        ApiRequestQueue req = requests.get(0);
+        req.markAsProcessing(); 
+        
+        // saveAndFlush를 호출하여 트랜잭션 커밋 전에 UPDATE 쿼리를 날려 낙관적 락 경합을 유도함
+        return queueRepository.saveAndFlush(req); 
+    }
+    
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    protected void handleResult(ApiRequestQueue request, ApiResponseDto result) {
+    protected void handleResult(ApiRequestQueue request, ApiResponseDto<?> result) {
         if (result.isSuccess()) {
             request.markAsSuccess();
         } else {
-            // API 응답은 정상이지만 논리적 에러(예: 파라미터 누락 등)인 경우
             request.markAsFailed(result.getErrorMessage());
         }
         queueRepository.save(request);
@@ -62,7 +77,6 @@ public class ApiWorker {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     protected void handleFailure(ApiRequestQueue request, String errorMessage) {
-        // 네트워크 타임아웃, JSON 파싱 에러 등 시스템 예외인 경우
         request.markAsFailed("System Error: " + errorMessage);
         queueRepository.save(request);
     }
